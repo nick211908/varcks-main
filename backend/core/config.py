@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     # Supabase credentials
     SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")
     SUPABASE_KEY: str = os.getenv("SUPABASE_KEY", "")
+    SUPABASE_SERVICE_KEY: str = os.getenv("SUPABASE_SERVICE_KEY", "")  # For admin operations
 
     # JWT Secret Key for security
     SECRET_KEY: str = os.getenv("SECRET_KEY", "a_very_secret_key")

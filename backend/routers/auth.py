@@ -1,57 +1,158 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordRequestForm
+from fastapi.security import HTTPAuthorizationCredentials
 from backend.models.request import UserCreate, UserLogin
 from backend.services.supabase import SupabaseService
-from backend.core.security import hash_password, verify_password, create_access_token
+from backend.core.security import get_current_user, security
+from pydantic import BaseModel, EmailStr
+from typing import Optional
 
-router = APIRouter(prefix="/auth", tags=["Authentication"])
+router = APIRouter(tags=["Authentication"])
 
-@router.post("/signup", status_code=status.HTTP_201_CREATED)
-async def signup(user_data: UserCreate, supabase_service: SupabaseService = Depends()):
+# --- Request Models ---
+
+class SignupRequest(BaseModel):
+    email: EmailStr
+    password: str
+    subscription_tier: Optional[str] = "free"
+
+class SigninRequest(BaseModel):
+    email: EmailStr
+    password: str
+
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str
+
+class EmailRequest(BaseModel):
+    email: EmailStr
+
+# --- Response Models ---
+
+class AuthResponse(BaseModel):
+    access_token: str
+    refresh_token: str
+    token_type: str
+    expires_in: int
+    user: dict
+
+class MessageResponse(BaseModel):
+    message: str
+
+class UserResponse(BaseModel):
+    user: dict
+    message: str
+
+# --- Authentication Endpoints ---
+
+@router.post("/signup", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+async def signup(
+    signup_data: SignupRequest, 
+    supabase_service: SupabaseService = Depends()
+):
     """
-    Handles user registration. Hashes the password and saves the new user to the database.
+    Register a new user using Supabase Auth.
+    This will automatically handle email confirmation if enabled in Supabase.
     """
-    # Check if user already exists
-    existing_user = await supabase_service.get_user_by_email(user_data.email)
-    if existing_user:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="An account with this email already exists.",
-        )
+    user_metadata = {"subscription_tier": signup_data.subscription_tier}
     
-    # Hash the password
-    hashed_password = hash_password(user_data.password)
+    result = await supabase_service.signup_user(
+        email=signup_data.email,
+        password=signup_data.password,
+        user_metadata=user_metadata
+    )
     
-    # Create the user in Supabase
-    new_user = await supabase_service.create_user(email=user_data.email, hashed_password=hashed_password)
-    if not new_user:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Could not create user account."
-        )
+    return result
 
-    return {"message": f"User account for {new_user['email']} created successfully."}
-
-
-@router.post("/login")
-async def login(form_data: OAuth2PasswordRequestForm = Depends(), supabase_service: SupabaseService = Depends()):
+@router.post("/signin", response_model=AuthResponse)
+async def signin(
+    signin_data: SigninRequest,
+    supabase_service: SupabaseService = Depends()
+):
     """
-    Handles user login. Verifies credentials and returns a JWT access token.
-    FastAPI's OAuth2PasswordRequestForm expects form data with 'username' and 'password'.
-    We will use the 'username' field to carry the email.
+    Sign in a user using Supabase Auth.
+    Returns access token and user information.
     """
-    user = await supabase_service.get_user_by_email(form_data.username)
+    result = await supabase_service.signin_user(
+        email=signin_data.email,
+        password=signin_data.password
+    )
     
-    # Check if user exists and password is correct
-    if not user or not verify_password(form_data.password, user['hashed_password']):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email or password.",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    
-    # Generate a JWT token
-    access_token = create_access_token(data={"sub": user['email']})
-    
-    return {"access_token": access_token, "token_type": "bearer"}
+    return result
 
+@router.post("/refresh", response_model=AuthResponse)
+async def refresh_token(
+    refresh_data: RefreshTokenRequest,
+    supabase_service: SupabaseService = Depends()
+):
+    """
+    Refresh an access token using a refresh token.
+    """
+    result = await supabase_service.refresh_token(refresh_data.refresh_token)
+    return result
+
+@router.post("/signout", response_model=MessageResponse)
+async def signout(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    supabase_service: SupabaseService = Depends()
+):
+    """
+    Sign out the current user.
+    """
+    token = credentials.credentials
+    result = await supabase_service.signout_user(token)
+    return result
+
+@router.get("/me")
+async def get_current_user_info(current_user: dict = Depends(get_current_user)):
+    """
+    Get current user information.
+    Requires valid authentication token.
+    """
+    return {"user": current_user}
+
+@router.post("/resend-confirmation", response_model=MessageResponse)
+async def resend_confirmation(
+    email_data: EmailRequest,
+    supabase_service: SupabaseService = Depends()
+):
+    """
+    Resend email confirmation.
+    """
+    result = await supabase_service.resend_confirmation(email_data.email)
+    return result
+
+@router.post("/reset-password", response_model=MessageResponse)
+async def reset_password(
+    email_data: EmailRequest,
+    supabase_service: SupabaseService = Depends()
+):
+    """
+    Send password reset email.
+    """
+    result = await supabase_service.reset_password(email_data.email)
+    return result
+
+# --- Legacy Endpoints (for backward compatibility) ---
+
+@router.post("/login", response_model=AuthResponse)
+async def login_legacy(
+    signin_data: SigninRequest,
+    supabase_service: SupabaseService = Depends()
+):
+    """
+    Legacy login endpoint - redirects to signin.
+    Kept for backward compatibility.
+    """
+    return await signin(signin_data, supabase_service)
+
+# --- Protected Endpoint Example ---
+
+@router.get("/protected")
+async def protected_route(current_user: dict = Depends(get_current_user)):
+    """
+    Example of a protected route that requires authentication.
+    """
+    return {
+        "message": f"Hello {current_user['email']}! This is a protected route.",
+        "user_id": current_user["id"],
+        "subscription_tier": current_user.get("subscription_tier", "free")
+    }

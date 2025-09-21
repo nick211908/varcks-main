@@ -14,16 +14,13 @@ class Req(BaseModel):
     """
     Defines the structure for an incoming request.
     """
-    convId: List[str] = Field(..., description="List of conversation identifiers")
-    reqId: str = Field(..., description="Unique request identifier")
-    chatId: str = Field(..., description="Chat session identifier")
+    convId: Optional[List[str]] = Field(None, description="Optional list of conversation identifiers.")
+    # reqId is now generated on the server for each request.
+    chatId: Optional[str] = Field(None, description="Chat session identifier. Omit to start a new chat, include to continue an existing one.")
     
-    # CORRECTED LINE: Using snake_case for the attribute name
-    # and aliasing it to accept 'userSubs' from the JSON request.
-    user_subs: Literal["free", "pro", "enterprise"] = Field(..., alias="userSubs", description="User subscription level")
-    
-    email: EmailStr = Field(..., description="User email address")
-    jwt_token: str = Field(..., description="JSON Web Token for authentication")
+    # The user's identity (email, subscription) will be determined from the
+    # authentication token (JWT) provided in the Authorization header,
+    # not from the request body.
 
     query: str = Field(..., description="The main user prompt or query")
     
