@@ -9,3 +9,9 @@ chardet
 rfc3986
 httpx
 python-jose[cryptography]
+langgraph
+langchain
+langchain-core
+langchain-google-genai
+langchain-community
+tavily-python
